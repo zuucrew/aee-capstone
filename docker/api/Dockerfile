@@ -70,9 +70,14 @@ COPY --from=builder /opt/venv /opt/venv
 WORKDIR /app
 
 # Application code only — no tests/notebooks/data baked into the image.
+# Note: sql/ is deliberately NOT copied. Those files are one-time DB
+# schema + seed scripts (scripts/init_supabase.py + seed_*.py) run
+# separately against an already-provisioned Supabase. The running
+# api/worker services never read them at runtime. Keeps the image
+# smaller and avoids a buildx context quirk with the sql/ directory
+# in this Dropbox-hosted repo.
 COPY src    ./src
 COPY config ./config
-COPY sql    ./sql
 
 # Quick liveness check; lifespan warmup can take 30-60 s on a cold start
 # while the local sentence-transformers model loads, so give it a buffer.

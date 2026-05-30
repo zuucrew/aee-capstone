@@ -121,6 +121,12 @@ onnxruntime>=1.17.0               # Silero VAD inference (notebook 03)
 torch>=2.0.0                      # PyTorch — required by Silero hub download
 
 # ========================================
+# Background Worker (Week 15 — production refactor)
+# ========================================
+arq>=0.26.0                       # Async Redis-backed worker (memory writes, auto-title, distill)
+redis>=5.0.0                      # Redis client (transitive dep of arq, pinned for compose service)
+
+# ========================================
 # Notebook & document utilities
 # ========================================
 ipython>=8.0.0                    # IPython.display.Audio in notebooks

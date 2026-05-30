@@ -26,6 +26,23 @@
 # =============================================================================
 
 services:
+  # Redis — Arq queue broker (Week 15).
+  # In production this becomes ElastiCache; locally it's a single container.
+  redis:
+    image: redis:7-alpine
+    container_name: nawaloka-redis
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"               # exposed for local arq-CLI introspection
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -36,6 +53,12 @@ services:
       - "8000:8000"               # exposed for /docs and direct API access
     env_file:
       - .env                      # SUPABASE_DB_URL, GROQ_API_KEY, etc.
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      ARQ_WORKER_ENABLED: "true"  # off → inline BackgroundTasks; on → Arq queue
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       # Persist the sentence-transformers model across restarts
       # (~90 MB; without this it re-downloads every container start).
@@ -46,6 +69,32 @@ services:
       timeout: 5s
       retries: 3
       start_period: 90s           # lifespan warmup needs time on cold start
+    restart: unless-stopped
+
+  # Arq worker — drains memory/distill/auto-title jobs off the request path.
+  # Reuses the api image; only the CMD differs.
+  worker:
+    build:
+      context: .
+      dockerfile: docker/api/Dockerfile
+    image: nawaloka-api             # same image as api — single build, faster CI
+    container_name: nawaloka-worker
+    command: ["arq", "workers.tasks.WorkerSettings"]
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - hf_cache:/root/.cache/huggingface
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "arq.*WorkerSettings"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     restart: unless-stopped
 
   web:
@@ -91,3 +140,5 @@ services:
 volumes:
   hf_cache:
     name: nawaloka_hf_cache
+  redis_data:
+    name: nawaloka_redis_data

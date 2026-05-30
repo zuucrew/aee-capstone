@@ -1,0 +1,84 @@
+# =============================================================================
+# ElastiCache (Redis) — env-level addon for nawaloka/dev
+#
+# Single-node cache.t4g.micro Redis cluster. ~$13/mo.
+#
+# This template is deployed as a nested stack by Copilot when you run
+# `copilot env deploy`. Inputs `App` and `Env` are supplied automatically.
+#
+# The cluster's endpoint hostname is exported so the service manifests
+# can refer to it (services read REDIS_URL from SSM; the post-deploy
+# step in scripts/aws/wire_redis_url.sh sets that SSM parameter).
+# =============================================================================
+
+Parameters:
+  App:
+    Type: String
+    Description: Copilot application name (auto-injected)
+  Env:
+    Type: String
+    Description: Copilot environment name (auto-injected)
+
+Resources:
+  # ── Subnet group — tells ElastiCache which subnets to live in ───────────
+  RedisSubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: !Sub "nawaloka ${Env} — public subnets for cache.t4g.micro"
+      SubnetIds:
+        Fn::Split:
+          - ","
+          - Fn::ImportValue: !Sub "${App}-${Env}-PublicSubnets"
+
+  # ── Security group — who can reach Redis on 6379 ────────────────────────
+  # Allow inbound 6379 from anything in the VPC CIDR (services live in
+  # the same VPC; nothing else can route here from outside).
+  RedisSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: !Sub "nawaloka ${Env} Redis ingress"
+      VpcId:
+        Fn::ImportValue: !Sub "${App}-${Env}-VpcId"
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          CidrIp: 10.0.0.0/16
+          Description: VPC-internal Redis access (ECS tasks)
+
+  # ── The cache cluster itself ────────────────────────────────────────────
+  RedisCluster:
+    Type: AWS::ElastiCache::CacheCluster
+    Properties:
+      ClusterName: !Sub "nawaloka-${Env}"
+      Engine: redis
+      EngineVersion: "7.1"
+      CacheNodeType: cache.t4g.micro
+      NumCacheNodes: 1
+      VpcSecurityGroupIds:
+        - !Ref RedisSecurityGroup
+      CacheSubnetGroupName: !Ref RedisSubnetGroup
+      Port: 6379
+      AutoMinorVersionUpgrade: true
+      Tags:
+        - Key: copilot-application
+          Value: !Ref App
+        - Key: copilot-environment
+          Value: !Ref Env
+
+Outputs:
+  RedisEndpoint:
+    Description: Redis primary endpoint hostname
+    Value: !GetAtt RedisCluster.RedisEndpoint.Address
+    Export:
+      Name: !Sub "${App}-${Env}-RedisEndpoint"
+  RedisPort:
+    Description: Redis port
+    Value: !GetAtt RedisCluster.RedisEndpoint.Port
+    Export:
+      Name: !Sub "${App}-${Env}-RedisPort"
+  RedisSecurityGroupId:
+    Description: SG to attach to anything that talks Redis
+    Value: !Ref RedisSecurityGroup
+    Export:
+      Name: !Sub "${App}-${Env}-RedisSecurityGroupId"

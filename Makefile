@@ -356,6 +356,80 @@ demo-voice-down:
 	@echo "✅ Voice-profile stack stopped."
 
 # ============================================================================
+# ☁️  AWS DEPLOY CONTROLS (Week 16)
+# ============================================================================
+# Cost-aware lifecycle commands for the AWS Copilot deploy.
+#
+# Typical class flow:
+#   Tuesday  → make aws-up        # bring everything back online
+#              <run class demo>
+#              make aws-down      # tear it all down → $0/mo
+#   Friday   → make aws-up
+#              <run class demo>
+#              make aws-down
+#
+# Standing cost while up: ~$130/mo. Per-hour-of-use: ~$0.20.
+# Standing cost while down: $0/mo.
+
+AWS_PROFILE ?= nawaloka
+AWS_REGION  ?= us-west-2
+
+aws-status:
+	@echo "☁️  Current AWS state for nawaloka/dev"
+	@echo ""
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) copilot svc ls 2>/dev/null || echo "  (no services deployed yet)"
+	@echo ""
+	@echo "📊 Month-to-date spend:"
+	@AWS_PROFILE=$(AWS_PROFILE) aws ce get-cost-and-usage \
+	    --time-period Start=$$(date -u -v1d +%Y-%m-%d),End=$$(date -u -v+1d +%Y-%m-%d) \
+	    --granularity MONTHLY \
+	    --metrics UnblendedCost \
+	    --query 'ResultsByTime[].Total.UnblendedCost.[Amount,Unit]' \
+	    --output text 2>/dev/null | awk '{printf "   $$%.2f %s\n", $$1, $$2}' || echo "   (cost data unavailable)"
+
+aws-up:
+	@echo "☁️  Bringing AWS deploy back online…"
+	@echo "   This takes ~15 min: env + 3 services + secrets sync"
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) copilot env deploy --name dev
+	@./scripts/aws/push_secrets.sh
+	@./scripts/aws/wire_redis_url.sh
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) copilot svc deploy --name api    --env dev
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) copilot svc deploy --name worker --env dev
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) copilot svc deploy --name voice  --env dev
+	@echo ""
+	@echo "✅ AWS deploy ready. Public URL:"
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) copilot svc show --name api 2>/dev/null | grep -A1 "URL" | head -2
+
+aws-down:
+	@echo "☁️  Tearing down AWS deploy → \$$0/mo"
+	@echo "   This deletes: VPC, NAT GWs, ALB, ECS cluster, ElastiCache, Fargate tasks"
+	@echo "   SSM secrets, ECR repos, IAM roles, and app metadata are PRESERVED"
+	@echo "   so 'make aws-up' can put it all back without re-configuring."
+	@echo ""
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) copilot env delete --name dev --yes
+	@echo ""
+	@echo "✅ AWS deploy torn down. Bill stops accruing in ~10 min."
+
+aws-nuke:
+	@echo "💥 NUCLEAR — deleting the entire Copilot app + ECR repos + SSM secrets"
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) copilot app delete --yes
+	@AWS_PROFILE=$(AWS_PROFILE) AWS_REGION=$(AWS_REGION) aws ssm get-parameters-by-path \
+	    --path /nawaloka/dev --recursive --query 'Parameters[].Name' --output text 2>/dev/null \
+	    | xargs -n 100 aws ssm delete-parameters --profile $(AWS_PROFILE) --region $(AWS_REGION) --names 2>/dev/null \
+	    || true
+	@echo "✅ Everything gone. Account is clean."
+
+aws-cost:
+	@echo "💰 Current month spend (UnblendedCost USD):"
+	@AWS_PROFILE=$(AWS_PROFILE) aws ce get-cost-and-usage \
+	    --time-period Start=$$(date -u -v1d +%Y-%m-%d),End=$$(date -u -v+1d +%Y-%m-%d) \
+	    --granularity MONTHLY \
+	    --metrics UnblendedCost \
+	    --group-by Type=DIMENSION,Key=SERVICE \
+	    --query 'ResultsByTime[0].Groups[].[Keys[0],Metrics.UnblendedCost.Amount]' \
+	    --output table
+
+# ============================================================================
 # 🧹 CLEANUP
 # ============================================================================
 

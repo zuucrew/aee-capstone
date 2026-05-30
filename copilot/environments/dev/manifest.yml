@@ -17,22 +17,12 @@
 name: dev
 type: Environment
 
-network:
-  vpc:
-    cidr: 10.0.0.0/16
-    subnets:
-      public:
-        - cidr: 10.0.0.0/24
-          az: us-west-2a
-        - cidr: 10.0.1.0/24
-          az: us-west-2b
-      # NO private subnets → Copilot does not create NAT Gateways.
-      # For production:
-      # private:
-      #   - cidr: 10.0.10.0/24
-      #     az: us-west-2a
-      #   - cidr: 10.0.11.0/24
-      #     az: us-west-2b
+# Copilot's default networking: 2 public + 2 private subnets + 2 NAT GWs.
+# We tried public-only to skip the ~$64/mo NAT cost but Copilot's validator
+# requires matched public/private AZs. Accepting the default for now.
+#
+# To reduce to 1 NAT (~$32/mo) once deployed: edit the CF template after
+# stack creation, or migrate to a custom imported VPC.
 
 observability:
   container_insights: false   # ~$0.20/task/day if enabled — off for course

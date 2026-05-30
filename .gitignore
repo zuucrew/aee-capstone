@@ -1,0 +1,85 @@
+# ── Secrets — NEVER COMMIT ─────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.production
+*.pem
+*.key
+credentials.json
+service-account*.json
+.aws/
+
+# ── Python ─────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+.ipynb_checkpoints/
+
+# ── Node / UI ──────────────────────────────────────────────────────
+ui/node_modules/
+ui/dist/
+ui/.vite/
+ui/.next/
+**/node_modules/
+**/dist/
+*.tsbuildinfo
+
+# ── Docker / build artefacts ───────────────────────────────────────
+*.tar
+*.tar.gz
+.docker/
+hf_cache/
+
+# ── OS / Editor ────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~
+
+# ── Word/Office lock files ─────────────────────────────────────────
+~$*
+
+# ── Large generated artefacts not needed in git ───────────────────
+*.mp3
+*.wav
+session-export-*.zip
+tmp_*.mp3
+
+# ── Generated docs (regenerate from .md via _md_to_docx.py) ───────
+docs/*.docx
+!docs/STUDENT_GUIDELINE.docx
+!docs/TEACHER_GUIDELINE.docx
+
+# ── Slide PDF — too big for git, distribute separately ────────────
+Weeks_15*.pdf
+
+# ── Local data / scratch ──────────────────────────────────────────
+data/*
+!data/.gitkeep
+logs/
+*.log
+
+# ── AWS Copilot generated state ───────────────────────────────────
+# (manifests under copilot/ ARE tracked — they're infra-as-code)
+copilot/.workspace
+copilot/**/addons/.cfn
+
+# ── Notebook outputs (we'll commit clean notebooks) ───────────────
+# Uncomment if you want to strip outputs:
+# notebooks/*.ipynb

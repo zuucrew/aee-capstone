@@ -16,7 +16,8 @@ name: worker
 type: Backend Service
 
 image:
-  build: docker/api/Dockerfile
+  # Reuses the api image (same code) — only the CMD differs.
+  location: 310485117018.dkr.ecr.us-west-2.amazonaws.com/nawaloka/worker:latest
   # No port — the worker has no HTTP surface. Talks Redis only.
   healthcheck:
     command:
@@ -27,12 +28,12 @@ image:
     timeout: 10s
     start_period: 2m       # boot includes orchestrator wiring (Supabase + Qdrant)
 
-# Override the api Dockerfile CMD — run arq instead of uvicorn.
+# Override the api image CMD — run arq instead of uvicorn.
 command: ["arq", "workers.tasks.WorkerSettings"]
 
 cpu: 512
 memory: 1024
-platform: linux/x86_64
+platform: linux/arm64
 count: 1
 exec: true
 network:

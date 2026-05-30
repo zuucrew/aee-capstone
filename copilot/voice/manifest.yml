@@ -16,7 +16,7 @@ name: voice
 type: Backend Service
 
 image:
-  build: docker/voice/Dockerfile
+  location: 310485117018.dkr.ecr.us-west-2.amazonaws.com/nawaloka/voice:latest
   # voice Dockerfile DOES install procps, so pgrep works here.
   healthcheck:
     command: ["CMD-SHELL", "pgrep -f voice.run >/dev/null || exit 1"]
@@ -27,7 +27,7 @@ image:
 
 cpu: 1024
 memory: 2048
-platform: linux/x86_64
+platform: linux/arm64
 count: 1                  # On-demand: scale via `copilot svc scale --name voice --count 0|1`
 exec: true
 network:

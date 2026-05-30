@@ -27,12 +27,17 @@ http:
     grace_period: 120s        # lifespan warmup needs time on cold start
 
 image:
-  build: docker/api/Dockerfile
+  # Pre-built + pushed to ECR by scripts/aws/build_push_images.sh.
+  # We bypass Copilot's own `build:` because its docker-container builder
+  # can't read the build context from this Dropbox path (the 🚧 emoji in
+  # the absolute path breaks its context tarball). Building locally with
+  # the default docker driver + pushing works fine.
+  location: 310485117018.dkr.ecr.us-west-2.amazonaws.com/nawaloka/api:latest
   port: 8000
 
 cpu: 1024            # 1 vCPU
 memory: 2048         # 2 GiB — enough for torch + langchain + qdrant + supabase
-platform: linux/x86_64
+platform: linux/arm64   # Graviton — native build on the M-series Mac, ~20% cheaper
 count: 2             # 2 replicas → demonstrates shared cache + queue across instances
 exec: true
 network:

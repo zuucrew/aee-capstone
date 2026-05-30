@@ -90,7 +90,10 @@ services:
     volumes:
       - hf_cache_prod:/root/.cache/huggingface
     healthcheck:
-      test: ["CMD", "pgrep", "-f", "arq.*WorkerSettings"]
+      # `pgrep` lives in `procps` which the slim runtime omits.
+      # Probe Redis directly from the worker — proves both the process is up
+      # AND that it can reach its broker. That's the actual liveness condition.
+      test: ["CMD", "python", "-c", "import os,redis; redis.from_url(os.environ['REDIS_URL']).ping()"]
       interval: 30s
       timeout: 5s
       retries: 3

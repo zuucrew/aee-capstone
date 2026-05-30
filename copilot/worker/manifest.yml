@@ -1,0 +1,61 @@
+# =============================================================================
+# worker — Arq background worker (Backend Service, no public ingress)
+#
+# Reuses the same Dockerfile as `api`. CMD override below switches from
+# `uvicorn` to `arq workers.tasks.WorkerSettings`.
+#
+# Same CPU/memory profile as api because the worker builds the same
+# orchestrator on boot (Supabase + Qdrant + LLM clients) — these tasks
+# need to be able to call the orchestrator's tools.
+#
+# Healthcheck pings Redis from inside the container — proves both the
+# process is alive AND that the broker connection works.
+# =============================================================================
+
+name: worker
+type: Backend Service
+
+image:
+  build: docker/api/Dockerfile
+  # No port — the worker has no HTTP surface. Talks Redis only.
+  healthcheck:
+    command:
+      - "CMD-SHELL"
+      - "python -c 'import os,redis; redis.from_url(os.environ[\"REDIS_URL\"]).ping()' || exit 1"
+    interval: 30s
+    retries: 3
+    timeout: 10s
+    start_period: 2m       # boot includes orchestrator wiring (Supabase + Qdrant)
+
+# Override the api Dockerfile CMD — run arq instead of uvicorn.
+command: ["arq", "workers.tasks.WorkerSettings"]
+
+cpu: 512
+memory: 1024
+platform: linux/x86_64
+count: 1
+exec: true
+network:
+  connect: true
+  vpc:
+    placement: public
+
+variables:
+  REDIS_URL: redis://nawaloka-redis-dev.serverless.uswest2.cache.amazonaws.com:6379/0
+  LOG_LEVEL: info
+  TIMEZONE: Asia/Colombo
+
+secrets:
+  SUPABASE_DB_URL:        /nawaloka/dev/SUPABASE_DB_URL
+  SUPABASE_URL:           /nawaloka/dev/SUPABASE_URL
+  SUPABASE_KEY:           /nawaloka/dev/SUPABASE_KEY
+  SUPABASE_SERVICE_KEY:   /nawaloka/dev/SUPABASE_SERVICE_KEY
+  QDRANT_URL:             /nawaloka/dev/QDRANT_URL
+  QDRANT_API_KEY:         /nawaloka/dev/QDRANT_API_KEY
+  GROQ_API_KEY:           /nawaloka/dev/GROQ_API_KEY
+  OPENROUTER_API_KEY:     /nawaloka/dev/OPENROUTER_API_KEY
+  OPENAI_API_KEY:         /nawaloka/dev/OPENAI_API_KEY
+  ANTHROPIC_API_KEY:      /nawaloka/dev/ANTHROPIC_API_KEY
+  LANGFUSE_PUBLIC_KEY:    /nawaloka/dev/LANGFUSE_PUBLIC_KEY
+  LANGFUSE_SECRET_KEY:    /nawaloka/dev/LANGFUSE_SECRET_KEY
+  LANGFUSE_BASE_URL:      /nawaloka/dev/LANGFUSE_BASE_URL

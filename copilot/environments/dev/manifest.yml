@@ -1,0 +1,38 @@
+# =============================================================================
+# nawaloka — dev environment
+#
+# Network shape: PUBLIC SUBNETS ONLY, NO NAT GATEWAYS.
+#
+# Why: course-grade deploy. NAT Gateways cost ~$32/month each (Copilot
+# defaults to 2 = $64/mo before any traffic). Tasks placed in public
+# subnets with public IPs can reach the internet directly through the
+# Internet Gateway — same outbound connectivity, $64 cheaper.
+#
+# Trade-off: tasks get a public IP. Security groups + ALB + IAM still
+# control who reaches them. For a production deployment serving real
+# patient data, switch to private subnets + NAT (uncomment the block
+# below and add `placement: private` to each service manifest).
+# =============================================================================
+
+name: dev
+type: Environment
+
+network:
+  vpc:
+    cidr: 10.0.0.0/16
+    subnets:
+      public:
+        - cidr: 10.0.0.0/24
+          az: us-west-2a
+        - cidr: 10.0.1.0/24
+          az: us-west-2b
+      # NO private subnets → Copilot does not create NAT Gateways.
+      # For production:
+      # private:
+      #   - cidr: 10.0.10.0/24
+      #     az: us-west-2a
+      #   - cidr: 10.0.11.0/24
+      #     az: us-west-2b
+
+observability:
+  container_insights: false   # ~$0.20/task/day if enabled — off for course

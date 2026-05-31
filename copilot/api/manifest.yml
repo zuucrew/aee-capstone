@@ -9,7 +9,7 @@
 # Tasks placed in PUBLIC subnets so they can reach the internet via the
 # IGW (no NAT GW needed). The ALB still front-doors them.
 #
-# Secrets pulled from SSM Parameter Store under /nawaloka/dev/<KEY>.
+# Secrets pulled from SSM Parameter Store under /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/<KEY>.
 # These are populated by scripts/aws/push_secrets.sh before first deploy.
 # =============================================================================
 
@@ -46,31 +46,30 @@ network:
     placement: public
 
 variables:
-  REDIS_URL: redis://nawaloka-redis-dev.serverless.uswest2.cache.amazonaws.com:6379/0
+  REDIS_URL: redis://nawaloka-dev.dahd4w.0001.usw2.cache.amazonaws.com:6379/0
   ARQ_WORKER_ENABLED: "true"
   LOG_LEVEL: info
   TIMEZONE: Asia/Colombo
 
-# Secrets pulled from SSM Parameter Store under /nawaloka/dev/<KEY>.
+# Secrets pulled from SSM Parameter Store under /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/<KEY>.
 # Key on the left = env var name in the container.
 # Value on the right = parameter name in SSM.
 secrets:
-  SUPABASE_DB_URL:        /nawaloka/dev/SUPABASE_DB_URL
-  SUPABASE_URL:           /nawaloka/dev/SUPABASE_URL
-  SUPABASE_KEY:           /nawaloka/dev/SUPABASE_KEY
-  SUPABASE_SERVICE_KEY:   /nawaloka/dev/SUPABASE_SERVICE_KEY
-  QDRANT_URL:             /nawaloka/dev/QDRANT_URL
-  QDRANT_API_KEY:         /nawaloka/dev/QDRANT_API_KEY
-  GROQ_API_KEY:           /nawaloka/dev/GROQ_API_KEY
-  OPENROUTER_API_KEY:     /nawaloka/dev/OPENROUTER_API_KEY
-  OPENAI_API_KEY:         /nawaloka/dev/OPENAI_API_KEY
-  ANTHROPIC_API_KEY:      /nawaloka/dev/ANTHROPIC_API_KEY
-  TAVILY_API_KEY:         /nawaloka/dev/TAVILY_API_KEY
-  LANGFUSE_PUBLIC_KEY:    /nawaloka/dev/LANGFUSE_PUBLIC_KEY
-  LANGFUSE_SECRET_KEY:    /nawaloka/dev/LANGFUSE_SECRET_KEY
-  LANGFUSE_BASE_URL:      /nawaloka/dev/LANGFUSE_BASE_URL
-  LIVEKIT_URL:            /nawaloka/dev/LIVEKIT_URL
-  LIVEKIT_API_KEY:        /nawaloka/dev/LIVEKIT_API_KEY
-  LIVEKIT_API_SECRET:     /nawaloka/dev/LIVEKIT_API_SECRET
-  DEEPGRAM_API_KEY:       /nawaloka/dev/DEEPGRAM_API_KEY
-  ELEVEN_API_KEY:         /nawaloka/dev/ELEVEN_API_KEY
+  SUPABASE_DB_URL:        /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SUPABASE_DB_URL
+  SUPABASE_URL:           /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SUPABASE_URL
+  SUPABASE_SERVICE_KEY:   /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/SUPABASE_SERVICE_KEY
+  QDRANT_URL:             /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/QDRANT_URL
+  QDRANT_API_KEY:         /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/QDRANT_API_KEY
+  GROQ_API_KEY:           /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/GROQ_API_KEY
+  OPENROUTER_API_KEY:     /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENROUTER_API_KEY
+  OPENAI_API_KEY:         /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/OPENAI_API_KEY
+  ANTHROPIC_API_KEY:      /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/ANTHROPIC_API_KEY
+  TAVILY_API_KEY:         /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/TAVILY_API_KEY
+  LANGFUSE_PUBLIC_KEY:    /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/LANGFUSE_PUBLIC_KEY
+  LANGFUSE_SECRET_KEY:    /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/LANGFUSE_SECRET_KEY
+  LANGFUSE_BASE_URL:      /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/LANGFUSE_BASE_URL
+  LIVEKIT_URL:            /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/LIVEKIT_URL
+  LIVEKIT_API_KEY:        /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/LIVEKIT_API_KEY
+  LIVEKIT_API_SECRET:     /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/LIVEKIT_API_SECRET
+  DEEPGRAM_API_KEY:       /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/DEEPGRAM_API_KEY
+  ELEVEN_API_KEY:         /copilot/${COPILOT_APPLICATION_NAME}/${COPILOT_ENVIRONMENT_NAME}/secrets/ELEVEN_API_KEY

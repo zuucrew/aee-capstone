@@ -1,0 +1,111 @@
+# =============================================================================
+# CI/CD — auto-deploy to AWS on push to `dev`
+#
+# What this does, with zero manual steps:
+#   1. Authenticates to AWS with short-lived OIDC creds (no stored secrets).
+#   2. Builds the api image (which also bundles the React SPA) natively on an
+#      arm64 runner — same architecture as our Graviton Fargate tasks.
+#   3. Pushes it to ECR as :latest and :<git-sha>.
+#   4. Retags the same image as the worker image (worker reuses api code).
+#   5. Forces ECS to roll new tasks for the api and worker services.
+#
+# Why arm64 runner: our Fargate platform is linux/arm64. `ubuntu-24.04-arm`
+# builds natively (fast) instead of emulating with QEMU.
+#
+# Why no `copilot` here: a plain `aws ecs update-service --force-new-deployment`
+# re-pulls the :latest image the task definition already points at — simpler
+# and needs far fewer IAM permissions than running Copilot in CI.
+#
+# Voice is intentionally NOT auto-deployed: it is an on-demand service kept at
+# 0 tasks. Deploy it manually when needed.
+# =============================================================================
+name: deploy
+
+on:
+  push:
+    branches: [dev]
+    # Skip no-op pushes that only touch docs.
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch: {}      # allow manual "Run workflow" from the Actions tab
+
+concurrency:
+  group: deploy-dev
+  cancel-in-progress: true
+
+permissions:
+  id-token: write            # required to request the OIDC token
+  contents: read
+
+env:
+  AWS_REGION: us-west-2
+  ACCOUNT_ID: "310485117018"
+  REGISTRY: 310485117018.dkr.ecr.us-west-2.amazonaws.com
+  CLUSTER_FILTER: nawaloka-dev
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-24.04-arm      # native arm64 → matches Graviton Fargate
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::310485117018:role/gha-deploy-nawaloka
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        run: |
+          aws ecr get-login-password --region "$AWS_REGION" \
+            | docker login --username AWS --password-stdin "$REGISTRY"
+
+      - name: Build api image (bundles the SPA)
+        run: |
+          SHA="${GITHUB_SHA::7}"
+          docker build \
+            -f docker/api/Dockerfile \
+            -t "$REGISTRY/nawaloka/api:latest" \
+            -t "$REGISTRY/nawaloka/api:$SHA" \
+            .
+
+      - name: Push api image
+        run: |
+          SHA="${GITHUB_SHA::7}"
+          docker push "$REGISTRY/nawaloka/api:latest"
+          docker push "$REGISTRY/nawaloka/api:$SHA"
+
+      - name: Retag + push worker image (reuses api image)
+        run: |
+          docker tag  "$REGISTRY/nawaloka/api:latest" "$REGISTRY/nawaloka/worker:latest"
+          docker push "$REGISTRY/nawaloka/worker:latest"
+
+      - name: Force ECS rollout (api + worker)
+        run: |
+          CLUSTER=$(aws ecs list-clusters \
+            --query "clusterArns[?contains(@,'$CLUSTER_FILTER')]" --output text)
+          echo "Cluster: $CLUSTER"
+          for svc in api worker; do
+            SVC=$(aws ecs list-services --cluster "$CLUSTER" \
+              --query "serviceArns[?contains(@,'-${svc}-')]" --output text)
+            echo "Rolling $svc → $SVC"
+            aws ecs update-service --cluster "$CLUSTER" --service "$SVC" \
+              --force-new-deployment >/dev/null
+          done
+
+      - name: Wait for services to stabilize
+        run: |
+          CLUSTER=$(aws ecs list-clusters \
+            --query "clusterArns[?contains(@,'$CLUSTER_FILTER')]" --output text)
+          for svc in api worker; do
+            SVC=$(aws ecs list-services --cluster "$CLUSTER" \
+              --query "serviceArns[?contains(@,'-${svc}-')]" --output text)
+            echo "Waiting for $svc to stabilize…"
+            aws ecs wait services-stable --cluster "$CLUSTER" --services "$SVC"
+            echo "$svc is stable ✓"
+          done
+
+      - name: Done
+        run: echo "✅ Deployed api + worker to AWS from commit ${GITHUB_SHA::7}"

@@ -30,11 +30,13 @@ Docs:
 
 import asyncio
 import os
+import pathlib
 import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 # Ensure src/ is on the path regardless of launch cwd
@@ -333,6 +335,27 @@ app.add_middleware(
 install_middleware(app)
 
 
+# ── SPA ⇄ API path bridge ─────────────────────────────────────────────
+# The React SPA (served at /) calls the backend over relative ``/api/*``
+# paths — that's how the Vite dev proxy is configured, and keeping the
+# same convention in production means the browser hits a single origin
+# (no CORS, one ALB hostname). The real API routes have no ``/api``
+# prefix (``/chat``, ``/voice/token`` …), so this middleware strips the
+# leading ``/api`` before routing. Runs before the router, so the rewrite
+# is transparent to every endpoint.
+@app.middleware("http")
+async def _strip_api_prefix(request, call_next):
+    path = request.scope.get("path", "")
+    if path == "/api" or path == "/api/":
+        request.scope["path"] = "/"
+        request.scope["raw_path"] = b"/"
+    elif path.startswith("/api/"):
+        new_path = path[4:]  # drop the leading "/api"
+        request.scope["path"] = new_path
+        request.scope["raw_path"] = new_path.encode("utf-8")
+    return await call_next(request)
+
+
 # ── Routers ──────────────────────────────────────────────────────────
 
 app.include_router(health_router.router)
@@ -348,12 +371,26 @@ app.include_router(crawl_router.router)
 app.include_router(voice_router.router)
 
 
-@app.get("/", tags=["System"])
-async def root():
-    """Friendly landing page pointer."""
-    return {
-        "service": "Nawaloka Health Assistant API",
-        "version": app.version,
-        "docs": "/docs",
-        "redoc": "/redoc",
-    }
+# ── SPA static files ──────────────────────────────────────────────────
+# In the container the compiled React build lives at /app/ui_dist (copied
+# by docker/api/Dockerfile from the Stage-0 node build). __file__ is
+# /app/src/api/main.py, so parents[2] == /app. When the build is present
+# we mount it at / with ``html=True`` so "/" serves index.html and
+# /assets/* serve the bundles. This mount is registered LAST, so every
+# real route (/chat, /health, /docs, …) is matched first; only unmatched
+# paths fall through to the SPA. Locally (no build) we keep a JSON root.
+_UI_DIST = pathlib.Path(__file__).resolve().parents[2] / "ui_dist"
+
+if _UI_DIST.is_dir():
+    app.mount("/", StaticFiles(directory=str(_UI_DIST), html=True), name="spa")
+    logger.info("SPA mounted from {}", _UI_DIST)
+else:
+    @app.get("/", tags=["System"])
+    async def root():
+        """Friendly landing page pointer (no SPA build present)."""
+        return {
+            "service": "Nawaloka Health Assistant API",
+            "version": app.version,
+            "docs": "/docs",
+            "redoc": "/redoc",
+        }

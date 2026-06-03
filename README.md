@@ -36,6 +36,24 @@ The week's full talk-track lives in `docs/week-15-teacher-guide.docx`, the spoke
 
 ---
 
+## What's new in Week 16 — Deploy to AWS + CI/CD
+
+Week 16 takes the local production stack to the cloud and makes deployment hands-off.
+
+| Feature | Impact |
+|---|---|
+| **AWS Copilot → ECS Fargate** | Three services (`api`, `worker`, `voice`) on serverless Graviton/arm64 containers behind an Application Load Balancer. No servers to manage. |
+| **ElastiCache Redis + Arq worker** | Managed Redis as the broker; the Arq worker drains slow jobs (memory distillation, auto-titling) off the request path. |
+| **SPA served from the API** | The React UI is built into the `api` image and served at `/`; FastAPI strips the `/api` prefix so one ALB hostname serves both the app and the API — no CORS, no second host. |
+| **SSM Parameter Store secrets** | 21 secrets stored as Copilot-managed SecureStrings; the ECS task role is auto-granted read + decrypt. Nothing sensitive in the image or Git. |
+| **On-demand voice** | The voice worker is kept at 0 tasks and scaled to 1 only for a call/demo — bursty cost instead of 24×7. |
+| **GitHub Actions CI/CD (OIDC)** | Push to `dev` → GitHub authenticates via OIDC (no stored keys), builds the arm64 image, pushes to ECR, and force-rolls the `api` + `worker` ECS services until stable. See `.github/workflows/deploy.yml`. |
+| **Cost guardrails** | AWS Budgets emails an alert every $20. Full cost breakdown, free-tier/credit analysis, and pause/teardown commands in `docs/Nawaloka_Cloud_Services_Cost_and_Decisions.docx`. |
+
+Pre-class AWS setup (account, IAM user, CLI) is in `docs/AWS_From_Zero_Account_and_IAM_Setup.docx`. Deployment commands are in the **Deploying to AWS** section below.
+
+---
+
 ## Architecture
 
 Two entry surfaces, one orchestrator core.
@@ -204,6 +222,10 @@ E2E Deployment/
 │   │
 │   ├── services/{chat_service, crm_service, ingest_service}/
 │   │
+│   ├── workers/                                  # ★ NEW W16: Arq background worker
+│   │   ├── tasks.py                              #   WorkerSettings: save_chat_turn, auto_title, distill
+│   │   └── enqueue.py                            #   ARQ_WORKER_ENABLED-gated job enqueue
+│   │
 │   └── infrastructure/
 │       ├── config.py
 │       ├── observability.py                      # ★ W15: v3+/v2 langfuse import fallback
@@ -230,14 +252,25 @@ E2E Deployment/
 │   └── 04_voice_agent_livekit.ipynb              # Week 14: voice + LangGraph integration
 │
 ├── docker/
-│   ├── api/Dockerfile                            # FastAPI service
-│   ├── web/Dockerfile                            # nginx + built React
+│   ├── api/Dockerfile                            # ★ W16: + Node stage bundles the SPA into the image
+│   ├── web/Dockerfile                            # nginx + built React (local compose only)
 │   └── voice/Dockerfile                          # LiveKit voice worker
+│
+├── copilot/                                      # ★ NEW W16: AWS Copilot manifests
+│   ├── environments/dev/manifest.yml            #   VPC + ALB + ECS cluster
+│   ├── api/manifest.yml                          #   Load Balanced Web Service (2 tasks, arm64)
+│   ├── worker/manifest.yml                       #   Backend Service (Arq worker)
+│   └── voice/manifest.yml                        #   Backend Service (on-demand, count 0)
+│
+├── .github/workflows/
+│   └── deploy.yml                                # ★ NEW W16: OIDC CI/CD — push to dev → AWS
 │
 ├── scripts/
 │   ├── seed_crm_unified.py, ingest_to_qdrant.py
 │   ├── seed_procedures.py, rebuild_cag_cache.py
-│   └── init_supabase.py
+│   ├── init_supabase.py
+│   └── aws/                                      # ★ NEW W16: build_push_images.sh, deploy_redis.sh,
+│       └── …                                     #            push_secrets.sh, cfn/redis-cluster.yml
 │
 ├── config/
 │   └── param.yaml                                # ★ W15: VAD 300/0.3 defaults (yaml ↔ dataclass)
@@ -247,6 +280,8 @@ E2E Deployment/
 │   ├── week-15-presentation-script.{md,docx}    # ★ NEW W15: spoken script per slide
 │   ├── week-15-code-walkthrough.{md,docx}        # ★ NEW W15: function-by-function reference
 │   ├── week-15-16-deck.md                        # Source for the slide deck
+│   ├── AWS_From_Zero_Account_and_IAM_Setup.docx  # ★ NEW W16: beginner AWS account + IAM + CLI guide
+│   ├── Nawaloka_Cloud_Services_Cost_and_Decisions.docx  # ★ NEW W16: cost, free tier, teardown
 │   ├── _md_to_docx.py                            # Regenerates .docx from .md
 │   ├── STUDENT_GUIDELINE.docx
 │   └── TEACHER_GUIDELINE.docx
@@ -255,14 +290,15 @@ E2E Deployment/
 ├── README.md                                     # ← this file
 ├── STUDENT_SETUP_GUIDE.md
 ├── Makefile                                      # demo / voice / voice-test / voice-logs / …
-├── docker-compose.yml                            # api + web (default), voice (profile)
+├── docker-compose.yml                            # api + web (default), voice (profile), ★ W16: + redis + worker
+├── compose.prod.yml                              # ★ NEW W16: 2 api replicas + worker + voice + redis + web
 ├── pyproject.toml                                # Source of truth for dependencies
 ├── requirements.txt                              # Lock-step with pyproject.toml
 ├── .env.example                                  # Template — includes voice section
 └── uv.lock
 ```
 
-**★ = files added or modified in Week 15.**
+**★ = files added or modified in Week 15 / Week 16** (labelled inline as W15 / W16).
 
 ---
 
@@ -492,7 +528,7 @@ This codebase is the **Week 15** material for the AI Engineer Essentials bootcam
 | 13 | Containerised + decision graph | Docker, FastAPI, React UI, guardrail, CAG |
 | 14 | Voice interface | LiveKit, Deepgram, ElevenLabs, Silero; voice side-car |
 | **15** | **Voice goes production-shaped + first-class UI feature** | **Voice fast path, real streaming, barge-in memory integrity, reactive bubble, sidebar split, auto-title, latency observability triangle** |
-| 16 (next) | Deploy to AWS | ECS Fargate, ElastiCache, SQS, CI/CD, Locust load test |
+| **16** | **Deploy to AWS + CI/CD** | **ECS Fargate (Graviton/arm64), ElastiCache Redis + Arq worker, ECR, ALB, SSM secrets, SPA served from the API, GitHub Actions OIDC auto-deploy** |
 
 **Week 15 is purely additive** to Week 14 — removing `src/voice/` (the Week-15-tagged additions), `ui/src/components/Voice*.tsx`, and `src/api/routers/voice.py` leaves Week 13/14 fully functional.
 
@@ -527,6 +563,62 @@ langchain-mcp-adapters>=0.2.2
 
 ---
 
+## Deploying to AWS (Week 16)
+
+Prerequisite: an AWS account + IAM user + CLI configured as profile `nawaloka`
+(region `us-west-2`). The full beginner walkthrough is
+`docs/AWS_From_Zero_Account_and_IAM_Setup.docx`.
+
+**First-time deploy** (one environment: VPC + ALB + cluster, then services):
+
+```bash
+# 1. Create the Copilot env (VPC, subnets, ALB, ECS cluster)
+copilot env init  && copilot env deploy --name dev
+
+# 2. Provision managed Redis (standalone CloudFormation)
+./scripts/aws/deploy_redis.sh
+
+# 3. Push the 21 secrets from .env into Copilot-managed SSM SecureStrings
+#    (referenced in copilot/*/manifest.yml as /copilot/${APP}/${ENV}/secrets/KEY)
+copilot secret init --cli-input-yaml /tmp/copilot-secrets.yml
+
+# 4. Build arm64 images locally + push to ECR, then deploy each service
+./scripts/aws/build_push_images.sh
+copilot svc deploy --name api    --env dev
+copilot svc deploy --name worker --env dev
+copilot svc deploy --name voice  --env dev
+```
+
+> Images are tagged `:latest`, so a re-deploy of unchanged code needs
+> `copilot svc deploy --force` (or push to `dev` and let CI/CD do it).
+
+**Ongoing deploys — just push:**
+
+```bash
+git push origin dev      # GitHub Actions builds, pushes to ECR, rolls api+worker
+```
+
+**Pause / resume to save cost** (services bill per hour they exist):
+
+```bash
+CL=nawaloka-dev-Cluster-KpIKFXAtIZpt
+# pause (scale all services to 0 — stops compute)
+for s in api worker voice; do
+  SVC=$(aws ecs list-services --cluster $CL \
+        --query "serviceArns[?contains(@,'-$s-')]" --output text --profile nawaloka)
+  aws ecs update-service --cluster $CL --service $SVC --desired-count 0 --profile nawaloka
+done
+# resume (api→2, worker→1, voice→1 — voice only when needed)
+```
+
+> A paused stack still bills ~$3–5/day for the ALB + NAT + Redis. To reach
+> ~$0/day, fully tear down with `copilot app delete` (code/images/secrets stay
+> safe in Git/ECR/SSM; rebuild takes ~15–20 min). Cost details and the full
+> teardown/rebuild commands are in
+> `docs/Nawaloka_Cloud_Services_Cost_and_Decisions.docx`.
+
+---
+
 ## Where to read next
 
 | You want to … | Read |
@@ -535,6 +627,8 @@ langchain-mcp-adapters>=0.2.2
 | **Present the slide deck** | `docs/week-15-presentation-script.docx` + `Weeks_15–16_…-2.pdf` |
 | **Understand the code function-by-function** | `docs/week-15-code-walkthrough.docx` |
 | **Set up your own dev environment** | `STUDENT_SETUP_GUIDE.md` |
+| **Set up AWS from zero (account + IAM + CLI)** | `docs/AWS_From_Zero_Account_and_IAM_Setup.docx` |
+| **Understand AWS cost, free tier & decisions** | `docs/Nawaloka_Cloud_Services_Cost_and_Decisions.docx` |
 | **Understand the slide deck source** | `docs/week-15-16-deck.md` |
 
 ---

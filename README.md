@@ -32,7 +32,7 @@ This week the voice path moved from *"works in LiveKit's playground"* to *"first
 | **Worker pre-warming** (`warm_start`) | One tiny `llm_fast.ainvoke("hi")` at boot primes the HTTPS pool so call #1 doesn't pay TLS handshake cost. |
 | **Langfuse v3+/v2 import fallback** | Tracing works whether your env has langfuse v2 or v4. |
 
-The week's full talk-track lives in `docs/week-15-teacher-guide.docx`, the spoken script in `docs/week-15-presentation-script.docx`, and the function-by-function reference in `docs/week-15-code-walkthrough.docx`.
+Each item above is labelled with the file it touches; see the **Architecture** and **Voice pipeline internals** sections below for how they fit together.
 
 ---
 
@@ -50,6 +50,36 @@ Week 16 takes the local production stack to the cloud and makes deployment hands
 | **GitHub Actions CI/CD (OIDC)** | Push to `dev` → GitHub authenticates via OIDC (no stored keys), builds the arm64 image, pushes to ECR, and force-rolls the `api` + `worker` ECS services until stable. See `.github/workflows/deploy.yml`. |
 | **Cost guardrails** | AWS Budgets emails an alert every $20. Full cost breakdown, free-tier/credit analysis, and pause/teardown commands in `docs/Nawaloka_Cloud_Services_Cost_and_Decisions.docx`. |
 
+### Deployment topology (Week 16)
+
+```mermaid
+flowchart TB
+    Dev(["git push → dev"]) --> GHA["GitHub Actions · OIDC"]
+    GHA --> ECR["Amazon ECR"]
+    User(["Browser"]) --> ALB
+
+    subgraph AWS["AWS · us-west-2"]
+        ALB["Application Load Balancer"] --> API["Fargate · api ×2<br/>SPA + FastAPI"]
+        WK["Fargate · worker · Arq"]
+        VO["Fargate · voice · on-demand"]
+        API --> REDIS[("ElastiCache Redis")]
+        WK --> REDIS
+        SSM[("SSM Parameter Store · secrets")] -.-> API
+        SSM -.-> WK
+        SSM -.-> VO
+    end
+
+    ECR --> API
+    ECR --> WK
+    ECR --> VO
+    API --> EXT[("Supabase + Qdrant")]
+    VO --> LKC["LiveKit Cloud"]
+
+    classDef store fill:#eef3fb,stroke:#2E5496,color:#1F3864;
+    class REDIS,SSM,EXT store;
+```
+
+
 Pre-class AWS setup (account, IAM user, CLI) is in `docs/AWS_From_Zero_Account_and_IAM_Setup.docx`. Deployment commands are in the **Deploying to AWS** section below.
 
 ---
@@ -58,76 +88,73 @@ Pre-class AWS setup (account, IAM user, CLI) is in `docs/AWS_From_Zero_Account_a
 
 Two entry surfaces, one orchestrator core.
 
-```
-┌────────────── TEXT PATH (Week 13) ──────────────┐   ┌──────────────── VOICE PATH (Week 14 + 15) ────────────────┐
-│                                                 │   │                                                            │
-│  Browser ──► FastAPI /chat ──► decision_graph   │   │  Browser (React) ──► POST /voice/token ──► JWT             │
-│                                   │             │   │     │                                                      │
-│                              guardrail (Llama)  │   │     ├─ livekit-client.connect() ──► LiveKit Cloud          │
-│                                   │             │   │     │                                       │              │
-│                              CAG cache (Qdrant) │   │     │                                       ▼              │
-│                                   │             │   │     │                                  Voice Worker        │
-│                                   └─► achat() ◄─┼───┼──── │ ◄─ LangGraphLLMAdapter ◄─ Silero VAD ─ Deepgram STT  │
-│                                                 │   │     │             │                                        │
-└─────────────────────────────────────────────────┘   │     │             ▼                                        │
-                       │                              │     │   orchestrator.achat_stream_fast()  ← Week 15        │
-                       ▼                              │     │             │                                        │
-       ┌──────────────────────────────────────┐       │     │     Groq llama-3.3-70b (streaming, real)             │
-       │   AgentOrchestrator (LangGraph)      │       │     │             │                                        │
-       │                                      │       │     │     tokens ─┼─► ElevenLabs TTS (streaming) ──► audio │
-       │   recall ─► supervisor ─► fan-out    │       │     │             │                                        │
-       │              │                       │       │     │     bg ── ► _save_voice_turn_async                   │
-       │   ┌──────────┼────────┬──────────┐   │       │     │             │  ├─ touch_session (sidebar row)        │
-       │   ▼          ▼        ▼          ▼   │       │     │             │  ├─ maybe_auto_title (LLM)             │
-       │  admin    clinical   direct  web     │       │     │             │  └─ distill (if not interrupted)       │
-       │   │         │         │       │      │       │     │             ▼                                        │
-       │   └─► merge_responses ─► save_memory │       │     │  data channel ◄── latency HUD ──► Browser bubble     │
-       │                          │           │       │     │                                                      │
-       └────────────┬─────────────┘           │       └────────────────────────────────────────────────────────────┘
-                    ▼
-            ┌──────────────────────────┐
-            │  4-tier Memory           │
-            │  (ST / LT / EP / Pr)     │
-            │  Supabase + pgvector     │
-            │  + Qdrant (RAG, CAG)     │
-            └──────────────────────────┘
-                       │
-                       ▼
-            ┌──────────────────────────┐
-            │  Langfuse (per-turn      │
-            │  trace + Sessions view)  │
-            └──────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph TEXT["TEXT PATH · Week 13"]
+        B1["Browser"] --> API["FastAPI /chat"]
+        API --> DG["decision_graph"]
+        DG --> GR["Guardrail · Llama"]
+        GR --> CAG["CAG cache · Qdrant"]
+        CAG --> ACH["achat()"]
+    end
+
+    subgraph VOICE["VOICE PATH · Week 14 + 15"]
+        VB["Browser · React"] --> TOK["POST /voice/token → JWT"]
+        TOK --> LK["LiveKit Cloud"]
+        LK --> VW["Voice Worker"]
+        VAD["Silero VAD"] --> STT["Deepgram STT"]
+        STT --> ADP["LangGraphLLMAdapter"]
+        VW --> ADP
+        ADP --> FAST["achat_stream_fast() · Week 15"]
+        FAST --> GROQ["Groq llama-3.3-70b · real streaming"]
+        GROQ --> TTS["ElevenLabs TTS → audio"]
+        FAST --> BG["_save_voice_turn_async"]
+        BG --> HUD["latency HUD → browser bubble"]
+    end
+
+    subgraph CORE["AgentOrchestrator · LangGraph"]
+        ORCH["recall → supervisor → fan-out"]
+        ORCH --> A1["admin"]
+        ORCH --> A2["clinical"]
+        ORCH --> A3["direct"]
+        ORCH --> A4["web"]
+        A1 --> MERGE["merge_responses → save_memory"]
+        A2 --> MERGE
+        A3 --> MERGE
+        A4 --> MERGE
+    end
+
+    ACH --> ORCH
+    MERGE --> MEM[("4-tier Memory · ST / LT / EP / Pr<br/>Supabase + pgvector + Qdrant")]
+    BG --> MEM
+    MEM --> LF[("Langfuse · per-turn trace + Sessions")]
+
+    classDef store fill:#eef3fb,stroke:#2E5496,color:#1F3864;
+    class MEM,LF store;
 ```
 
 **Key boundary:** `src/voice/` and `ui/src/components/Voice*.tsx` are a self-contained vertical slice. The voice fast path is the only orchestrator addition (`achat_stream_fast`); the multi-agent text graph is untouched. Removing the voice layer leaves Week 13 fully functional.
 
 ### Voice pipeline internals (Week 15)
 
-```
-LiveKit Agent (livekit.agents.voice.Agent)
-    │
-    ├── VAD          : silero.VAD.load(activation_threshold=0.5,
-    │                                  min_silence_duration=0.3 s)
-    ├── STT          : deepgram.STT(model="nova-3", language="en")         ← streaming
-    ├── LLM          : LangGraphLLMAdapter(orchestrator)
-    │                     │
-    │                     └── LangGraphLLMStream._run()
-    │                           ├─ open Langfuse "voice_pipeline" span
-    │                           ├─ async for kind, payload in achat_stream_fast(...)
-    │                           │     ├─ "token"   → emit ChatChunk → TTS
-    │                           │     ├─ "partial" → remember spoken (for barge-in)
-    │                           │     └─ "final"   → AgentResponse with metadata
-    │                           ├─ on CancelledError (barge-in):
-    │                           │     ├─ orchestrator saves [interrupted] partial
-    │                           │     ├─ update Langfuse span (barge_in=true)
-    │                           │     └─ re-raise
-    │                           └─ stash last_latency for data-channel publish
-    │
-    ├── TTS          : elevenlabs.TTS(model="eleven_turbo_v2_5",
-    │                                 voice_id="l7kNoIfnJKPg7779LI2t")     ← streaming
-    │
-    └── allow_interruptions=True
-        min_endpointing_delay=0.3 s
+```mermaid
+flowchart TB
+    AG["LiveKit Agent"] --> VAD["VAD · Silero<br/>activation 0.5 · min_silence 0.3s"]
+    AG --> STT["STT · Deepgram nova-3 · streaming"]
+    AG --> LLM["LLM · LangGraphLLMAdapter"]
+    AG --> TTS["TTS · ElevenLabs turbo v2.5 · streaming"]
+    AG --> OPT["allow_interruptions=True<br/>min_endpointing_delay=0.3s"]
+
+    LLM --> RUN["LangGraphLLMStream._run()"]
+    RUN --> SPAN["open Langfuse 'voice_pipeline' span"]
+    RUN --> LOOP{"async for kind, payload<br/>in achat_stream_fast()"}
+    LOOP -->|token| T1["emit ChatChunk → TTS"]
+    LOOP -->|partial| T2["remember spoken · barge-in"]
+    LOOP -->|final| T3["AgentResponse + metadata"]
+    RUN --> CANCEL["on CancelledError · barge-in:<br/>save [interrupted] partial · span barge_in=true · re-raise"]
+
+    classDef warn fill:#fdecea,stroke:#C00000,color:#7a1010;
+    class CANCEL warn;
 ```
 
 **EOU policy** is three-layered:
@@ -139,37 +166,33 @@ Perceived endpoint = layer 2 + layer 3 = **600 ms**.
 
 ### Latency budget (measured)
 
-```
-User stops speaking
-   │
-   ├─ VAD endpointing                 300 ms
-   ├─ Deepgram STT (streaming)       200 ms
-   ├─ Orchestrator pre-LLM           <150 ms   ← time-boxed memory fetch (off-thread)
-   ├─ Groq llama-3.3-70b first token 200–400 ms
-   ├─ ElevenLabs TTS first byte      200 ms
-   └─ Network (browser ↔ region)     200 ms
-                                     ───────
-                                     ~1.5 s perceived
+```mermaid
+flowchart TB
+    U(["User stops speaking"]) -->|300 ms| V["VAD endpointing"]
+    V -->|200 ms| S["Deepgram STT · streaming"]
+    S -->|"&lt;150 ms"| O["Orchestrator pre-LLM<br/>time-boxed memory fetch · off-thread"]
+    O -->|"200–400 ms"| G["Groq llama-3.3-70b · first token"]
+    G -->|200 ms| E["ElevenLabs TTS · first byte"]
+    E -->|200 ms| N["Network · browser ↔ region"]
+    N --> R(["≈ 1.5 s perceived"])
+
+    classDef goal fill:#e4ecda,stroke:#548235,color:#2c4214;
+    class R goal;
 ```
 
 The full Week 15 latency story (including the `streaming=False` bug fix that cost 2 seconds, and the sync Supabase fetch that cost another 700–1500 ms) is on slide 7 of the deck and Concept 1 of the code walkthrough.
 
 ### MCP integration layer
 
-```
-orchestrator.py (build_agent_mcp)
-        │
-  MCP Client Layer (langchain-mcp-adapters)
-        │
-   ┌────┼─────────────┐
-   │    │             │
-nawaloka  nawaloka     postgres
- -crm     -memory       MCP
-(custom)  (custom)  (off-the-shelf)
-   │         │             │
-CRMTool  MemoryOps     Supabase
-   │         │          raw SQL
-Supabase  pgvector
+```mermaid
+flowchart TB
+    O["orchestrator.py · build_agent_mcp()"] --> C["MCP Client Layer<br/>langchain-mcp-adapters"]
+    C --> S1["nawaloka-crm · custom"]
+    C --> S2["nawaloka-memory · custom"]
+    C --> S3["postgres MCP · off-the-shelf"]
+    S1 --> CRM["CRMTool → Supabase"]
+    S2 --> MO["MemoryOps → pgvector"]
+    S3 --> PG["Supabase · raw SQL"]
 ```
 
 Three MCP servers, three origins, one agent. The text path uses MCP-backed tools; the voice fast path skips MCP for latency reasons and calls Groq directly.
@@ -276,17 +299,9 @@ E2E Deployment/
 │   └── param.yaml                                # ★ W15: VAD 300/0.3 defaults (yaml ↔ dataclass)
 │
 ├── docs/
-│   ├── week-15-teacher-guide.{md,docx}           # ★ NEW W15: pre-class + flow + Q&A
-│   ├── week-15-presentation-script.{md,docx}    # ★ NEW W15: spoken script per slide
-│   ├── week-15-code-walkthrough.{md,docx}        # ★ NEW W15: function-by-function reference
-│   ├── week-15-16-deck.md                        # Source for the slide deck
-│   ├── AWS_From_Zero_Account_and_IAM_Setup.docx  # ★ NEW W16: beginner AWS account + IAM + CLI guide
-│   ├── Nawaloka_Cloud_Services_Cost_and_Decisions.docx  # ★ NEW W16: cost, free tier, teardown
-│   ├── _md_to_docx.py                            # Regenerates .docx from .md
-│   ├── STUDENT_GUIDELINE.docx
-│   └── TEACHER_GUIDELINE.docx
+│   ├── AWS_From_Zero_Account_and_IAM_Setup.{docx,pdf}      # beginner AWS account + IAM + CLI guide
+│   └── Nawaloka_Cloud_Services_Cost_and_Decisions.{docx,pdf}  # cost, free tier, teardown
 │
-├── Weeks_15–16_From_Local_Demo_to_Production_at_Scale-2.pdf   # ← the final slide deck
 ├── README.md                                     # ← this file
 ├── STUDENT_SETUP_GUIDE.md
 ├── Makefile                                      # demo / voice / voice-test / voice-logs / …
@@ -432,28 +447,24 @@ The voice worker itself has no HTTP surface — it talks LiveKit's room protocol
 Every `.chat()`, `.achat()`, and voice turn produces a Langfuse trace.
 
 **Text path:**
-```
-trace: agent_chat
-  ├── node_recall        (ST + LT retrieval)
-  ├── node_supervisor    (router LLM generation)
-  ├── node_[agent]       (tool call + synthesis)
-  └── node_save_memory   (ST store + LT distillation)
+```mermaid
+flowchart TB
+    T["trace: agent_chat"] --> R["node_recall · ST + LT retrieval"]
+    T --> S["node_supervisor · router LLM"]
+    T --> A["node_[agent] · tool call + synthesis"]
+    T --> M["node_save_memory · ST store + LT distillation"]
 ```
 
 **Voice path (Week 15):**
-```
-trace: voice_turn
-  └── span: voice_pipeline           ← user_id, session_id, tags=[voice, fast_path]
-       ├── metadata.first_token_ms
-       ├── metadata.llm_total_ms
-       ├── metadata.agent_total_ms
-       ├── metadata.chunks
-       ├── metadata.barge_in         (true if interrupted)
-       └── generation: ChatGroq llama-3.3-70b-versatile
-              ├── input messages
-              ├── output completion
-              ├── token usage
-              └── cost
+```mermaid
+flowchart TB
+    T["trace: voice_turn"] --> SP["span: voice_pipeline<br/>user_id · session_id · tags[voice, fast_path]"]
+    SP --> M1["first_token_ms"]
+    SP --> M2["llm_total_ms"]
+    SP --> M3["agent_total_ms"]
+    SP --> M4["chunks"]
+    SP --> M5["barge_in · true if interrupted"]
+    SP --> GEN["generation · ChatGroq llama-3.3-70b<br/>input · output · token usage · cost"]
 ```
 
 All turns of one call share `session_id="voice-<room>"` → grouped in the Langfuse **Sessions** view. Filter by `tags:["voice","fast_path"]` for the voice subset.
@@ -483,15 +494,14 @@ crm_tool = _MCPCRMToolAdapter(tools)    # same dispatch() interface
 
 ### MCP server architecture (stdio transport)
 
-```
-Host Process (LangGraph agent)
-  │
-  ├── spawns subprocess ──► CRM MCP Server (crm_server.py)
-  │                            │
-  ├── stdin  (JSON-RPC) ────►|
-  ├── stdout (JSON-RPC) ◄───|
-  │                            │
-  └── stderr (logs only) ◄───|
+```mermaid
+sequenceDiagram
+    participant H as Host · LangGraph agent
+    participant M as CRM MCP Server
+    H->>M: spawn subprocess
+    H->>M: stdin · JSON-RPC request
+    M-->>H: stdout · JSON-RPC response
+    M-->>H: stderr · logs only
 ```
 
 > **Important:** Never `print()` inside an MCP server. stdout is reserved for the JSON-RPC protocol. Use `loguru` (defaults to stderr).
@@ -623,13 +633,10 @@ done
 
 | You want to … | Read |
 |---|---|
-| **Teach this week's session** | `docs/week-15-teacher-guide.docx` |
-| **Present the slide deck** | `docs/week-15-presentation-script.docx` + `Weeks_15–16_…-2.pdf` |
-| **Understand the code function-by-function** | `docs/week-15-code-walkthrough.docx` |
 | **Set up your own dev environment** | `STUDENT_SETUP_GUIDE.md` |
 | **Set up AWS from zero (account + IAM + CLI)** | `docs/AWS_From_Zero_Account_and_IAM_Setup.docx` |
 | **Understand AWS cost, free tier & decisions** | `docs/Nawaloka_Cloud_Services_Cost_and_Decisions.docx` |
-| **Understand the slide deck source** | `docs/week-15-16-deck.md` |
+| **Deploy to AWS** | the **Deploying to AWS** section above |
 
 ---
 
@@ -646,7 +653,6 @@ done
 | Auto-title never fires | Need ≥ 4 ST turns and the title must still be the auto-generated default. Reset by creating a new session. |
 | Langfuse traces missing | `pip install --upgrade 'langfuse>=3.0.0'`. The v2 fallback in `observability.py` works but newer is better. |
 
-For the full Week 15 Q&A list and gotchas, see `docs/week-15-teacher-guide.docx` Part E.
 
 ---
 

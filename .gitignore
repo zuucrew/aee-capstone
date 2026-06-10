@@ -61,10 +61,17 @@ Thumbs.db
 session-export-*.zip
 tmp_*.mp3
 
-# ── Generated docs (regenerate from .md via _md_to_docx.py) ───────
+# ── Generated / instructor-only docs (NOT for student distribution) ───────
 docs/*.docx
-!docs/STUDENT_GUIDELINE.docx
-!docs/TEACHER_GUIDELINE.docx
+# Keep only the two student-facing docs:
+!docs/AWS_From_Zero_Account_and_IAM_Setup.docx
+!docs/Nawaloka_Cloud_Services_Cost_and_Decisions.docx
+# Instructor-only material + ad-hoc generators (kept locally, never shared):
+docs/week-15-16-deck.md
+docs/_build_aws_setup_doc.js
+docs/_build_cost_doc.js
+docs/_md_to_docx.py
+scripts/build_guidelines.py
 
 # ── Slide PDF — too big for git, distribute separately ────────────
 Weeks_15*.pdf

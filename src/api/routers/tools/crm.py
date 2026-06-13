@@ -53,13 +53,14 @@ async def search_doctors(
     req: CRMSearchDoctorsRequest,
     crm=Depends(get_crm_tool),
 ) -> CRMResponse:
+    # NOTE: CRMTool.search_doctors() supports specialty/location/doctor_name only.
+    # The availability filters were never implemented on the tool, so forwarding
+    # them raised TypeError → HTTP 500. Match the tool's real signature.
     return await _run(
         crm.search_doctors,
         specialty=req.specialty,
         location=req.location,
         doctor_name=req.doctor_name,
-        available_from=req.available_from,
-        available_to=req.available_to,
     )
 
 

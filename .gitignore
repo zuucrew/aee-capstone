@@ -68,10 +68,12 @@ docs/*.docx
 !docs/Nawaloka_Cloud_Services_Cost_and_Decisions.docx
 # Instructor-only material + ad-hoc generators (kept locally, never shared):
 docs/week-15-16-deck.md
-docs/_build_aws_setup_doc.js
-docs/_build_cost_doc.js
+docs/_build_*.js
 docs/_md_to_docx.py
 scripts/build_guidelines.py
+# Instructor teaching guides (role-play scripts) — never share with students:
+docs/*teacher-guide*
+docs/*teacher_guide*
 
 # ── Slide PDF — too big for git, distribute separately ────────────
 Weeks_15*.pdf

@@ -628,39 +628,77 @@ class AgentOrchestrator:
 
         t_start = time.perf_counter()
 
-        # ── 1) Memory fetch: time-boxed, off-thread ──
-        # `st_store.recent` is a sync Supabase SQL call. We run it off-thread
-        # so the event loop is never blocked, with a generous cap: the cap is
-        # a SAFETY net against a hung DB, not a latency optimisation. The old
-        # 150ms cap fired on essentially every turn (Supabase round-trips are
-        # 200-600ms), so the agent silently lost ALL conversation memory and
-        # repeated itself ("which department?"). 2.5s lets memory actually
-        # load; a healthy fetch returns in well under that.
+        # ── 1) Memory fetch — INSTANT from the per-call in-memory cache ──
+        # The voice worker can be far from Supabase (200-1500ms per fetch).
+        # Fetching every turn made replies take 10-15s. Instead we keep a tiny
+        # per-call context cache (filled by `_save_voice_turn_async` after each
+        # turn): reading it is instant, so turns 2+ have memory with ZERO DB
+        # latency. We only touch the DB on the FIRST turn (cache cold), with a
+        # tight cap so a slow/distant DB can't stall the opening reply either.
         memory_context = ""
         t_mem_start = time.perf_counter()
-        try:
-            recent = await _asyncio.wait_for(
-                _asyncio.to_thread(
-                    self.st_store.recent, user_id, session_id, 6
-                ),
-                timeout=2.5,
-            )
-            if recent:
-                memory_context = self.recaller.format_context(recent)
-        except _asyncio.TimeoutError:
-            logger.warning("voice: memory fetch >2.5s — skipping context (DB slow)")
-        except Exception as e:
-            logger.debug(f"voice: memory fetch failed (non-fatal): {e}")
+        cache = getattr(self, "_voice_ctx_cache", None)
+        if cache is None:
+            cache = self._voice_ctx_cache = {}
+        cached_turns = cache.get(session_id)
+        if cached_turns:
+            memory_context = self.recaller.format_context(cached_turns)
+        else:
+            try:
+                recent = await _asyncio.wait_for(
+                    _asyncio.to_thread(self.st_store.recent, user_id, session_id, 6),
+                    timeout=0.6,
+                )
+                if recent:
+                    memory_context = self.recaller.format_context(recent)
+                    cache[session_id] = list(recent)
+            except _asyncio.TimeoutError:
+                logger.warning("voice: first-turn memory fetch slow (>0.6s) — proceeding")
+            except Exception as e:
+                logger.debug(f"voice: memory fetch failed (non-fatal): {e}")
         t_mem_done = time.perf_counter()
 
-        # ── 2) Build the voice-shaped prompt ──
+        # ── 2) Route + fetch grounded data from the real tools ──
+        # The voice path is no longer a bare LLM. We run the SAME router the
+        # text path uses, and for data questions (doctors, bookings, RAG, web)
+        # we call the REAL tool and feed its output to the synthesis LLM below.
+        # That is what stops voice from inventing doctor names and times.
+        # Greetings / small talk route to "direct" and skip the tools, so they
+        # stay fast. memory_context is passed to the router so follow-ups like
+        # "book the first one" / "their timings" resolve to the right referent.
+        tool_output = ""
+        route = "direct"
+        try:
+            decision = await self.router.aroute(user_message, memory_context)
+            primary = (decision.decisions[0]
+                       if getattr(decision, "decisions", None) else None)
+            route = (primary.route if primary else "direct") or "direct"
+            if route in ("crm", "rag", "web_search") and primary is not None:
+                tool_output = await self._voice_dispatch_tool(
+                    primary, patient_id=user_id, fallback_query=user_message,
+                )
+        except Exception as e:  # noqa: BLE001 — routing must never break the call
+            logger.warning(f"voice: routing/tool dispatch failed (non-fatal): {e}")
+        t_route_done = time.perf_counter()
+
+        # ── 3) Build the voice-shaped prompt (grounded when a tool ran) ──
         system = (
             "You are the Nawaloka Hospital voice assistant on a live phone "
             "call. Keep replies short, warm, conversational — under three "
-            "sentences. No markdown, no bullet points, no asterisks. The "
-            "caller is listening, not reading.\n\n"
-            f"=== RECENT CONVERSATION ===\n{memory_context}"
+            "sentences. No markdown, no tables, no bullet points, no asterisks. "
+            "The caller is listening, not reading; read names and numbers "
+            "naturally.\n\n"
         )
+        if tool_output:
+            system += (
+                "Answer using ONLY the information below — it is the live source "
+                "of truth from the hospital's systems. Do NOT invent doctor "
+                "names, times, departments, or booking details. If it does not "
+                "contain the answer, say you don't have that detail and offer to "
+                "help another way.\n\n"
+                f"=== INFORMATION ===\n{tool_output}\n\n"
+            )
+        system += f"=== RECENT CONVERSATION ===\n{memory_context}"
         messages = [
             SystemMessage(content=system),
             HumanMessage(content=user_message),
@@ -684,7 +722,8 @@ class AgentOrchestrator:
                     logger.info(
                         "⏱  achat_stream_fast: "
                         f"mem={int((t_mem_done - t_mem_start) * 1000)}ms, "
-                        f"prompt={int((t_prompt_built - t_mem_done) * 1000)}ms, "
+                        f"route+tool={int((t_route_done - t_mem_done) * 1000)}ms (route={route}), "
+                        f"prompt={int((t_prompt_built - t_route_done) * 1000)}ms, "
                         f"pre_llm_total={int((t_prompt_built - t_start) * 1000)}ms, "
                         f"first_llm_chunk={int((t_first_chunk - t_prompt_built) * 1000)}ms"
                     )
@@ -742,6 +781,41 @@ class AgentOrchestrator:
             ),
         )
 
+    # ── Voice tool dispatch ─────────────────────────────────────
+
+    async def _voice_dispatch_tool(self, decision, *, patient_id, fallback_query=""):
+        """Run the tool for a voice ``RouteDecision`` — mirrors the text
+        path's ``_dispatch_tool`` so voice answers are grounded in the SAME
+        live data (CRM / RAG / web) instead of being invented by a bare LLM.
+
+        Returns the tool's plain-text output (the synthesis prompt then feeds
+        it to the LLM as the source of truth). Never raises — on any failure
+        it returns ``""`` and the caller falls back to an ungrounded reply.
+        """
+        import asyncio as _asyncio
+        route = getattr(decision, "route", "direct")
+        params = dict(getattr(decision, "params", None) or {})
+        try:
+            if route == "crm" and self.crm_tool is not None:
+                action = getattr(decision, "action", None) or "lookup_patient"
+                # Self-referential CRM actions get the caller's patient_id when
+                # the router didn't extract one (e.g. "cancel my appointment").
+                if action in {"lookup_patient", "create_booking",
+                              "cancel_booking", "reschedule_booking"}:
+                    params.setdefault("patient_id", patient_id)
+                return await _asyncio.to_thread(self.crm_tool.dispatch, action, params)
+            if route == "rag" and self.rag_tool is not None:
+                if not params.get("query") and fallback_query:
+                    params["query"] = fallback_query
+                return await _asyncio.to_thread(self.rag_tool.dispatch, "search", params)
+            if route == "web_search" and self.web_tool is not None:
+                if not params.get("query") and fallback_query:
+                    params["query"] = fallback_query
+                return await _asyncio.to_thread(self.web_tool.dispatch, "search", params)
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"voice: tool dispatch ({route}) failed: {e}")
+        return ""
+
     # ── Voice memory persistence ────────────────────────────────
 
     async def _save_voice_turn_async(
@@ -793,6 +867,23 @@ class AgentOrchestrator:
                         role="assistant", content=stored_assistant, ts=now,
                     ),
                 )
+                # Keep the per-call in-memory context fresh so the NEXT turn
+                # gets memory INSTANTLY (no Supabase round-trip) — this is what
+                # keeps voice latency low across a conversation.
+                try:
+                    _cache = getattr(self, "_voice_ctx_cache", None)
+                    if _cache is None:
+                        _cache = self._voice_ctx_cache = {}
+                    _turns = list(_cache.get(session_id) or [])
+                    _turns.append(ConversationTurn(
+                        user_id=user_id, session_id=session_id,
+                        role="user", content=user_message, ts=now))
+                    _turns.append(ConversationTurn(
+                        user_id=user_id, session_id=session_id,
+                        role="assistant", content=stored_assistant, ts=now))
+                    _cache[session_id] = _turns[-6:]
+                except Exception:
+                    pass
                 # Materialise a chat_sessions row so the call appears in
                 # the UI sidebar (the "voice-" session_id prefix is the
                 # marker the frontend uses to split voice from text).

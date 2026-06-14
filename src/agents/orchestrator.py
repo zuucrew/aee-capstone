@@ -629,22 +629,26 @@ class AgentOrchestrator:
         t_start = time.perf_counter()
 
         # ── 1) Memory fetch: time-boxed, off-thread ──
-        # `st_store.recent` is a sync Supabase SQL call. From a distant
-        # region it can be 500-1500ms; we MUST NOT block the event loop
-        # before the LLM. Off-thread + 150ms hard cap.
+        # `st_store.recent` is a sync Supabase SQL call. We run it off-thread
+        # so the event loop is never blocked, with a generous cap: the cap is
+        # a SAFETY net against a hung DB, not a latency optimisation. The old
+        # 150ms cap fired on essentially every turn (Supabase round-trips are
+        # 200-600ms), so the agent silently lost ALL conversation memory and
+        # repeated itself ("which department?"). 2.5s lets memory actually
+        # load; a healthy fetch returns in well under that.
         memory_context = ""
         t_mem_start = time.perf_counter()
         try:
             recent = await _asyncio.wait_for(
                 _asyncio.to_thread(
-                    self.st_store.recent, user_id, session_id, 3
+                    self.st_store.recent, user_id, session_id, 6
                 ),
-                timeout=0.15,
+                timeout=2.5,
             )
             if recent:
                 memory_context = self.recaller.format_context(recent)
         except _asyncio.TimeoutError:
-            logger.warning("voice: memory fetch >150 ms — skipping context")
+            logger.warning("voice: memory fetch >2.5s — skipping context (DB slow)")
         except Exception as e:
             logger.debug(f"voice: memory fetch failed (non-fatal): {e}")
         t_mem_done = time.perf_counter()

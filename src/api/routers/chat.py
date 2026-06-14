@@ -586,11 +586,29 @@ async def _run_chat_pipeline(
     cache_for_router = request.app.state.session_cache.get(
         _cache_key(req.user_id, req.session_id)
     )
+    recent_turns = []
     if cache_for_router is not None:
         recent_turns = (cache_for_router.get("st_turns") or [])[-4:]
-        router_context = agent.recaller.format_context(recent_turns)
-    else:
-        router_context = ""
+    if not recent_turns:
+        # Cold warm-cache: a DIFFERENT api replica handled the previous turn
+        # (the warm cache is per-task, in-memory), or no warmup ran. Without
+        # this fallback the router fires with ZERO history and can't resolve
+        # follow-ups — "what are their timings?", "cancel that one" — so it
+        # misroutes them (we saw "their timings" go to RAG and return
+        # radiology hours). The cache is a latency optimisation; this fetch
+        # guarantees the router always sees the conversation, so memory works
+        # no matter which replica serves the turn.
+        try:
+            live = await asyncio.to_thread(
+                st_store.recent, req.user_id, req.session_id, 4
+            )
+            recent_turns = live or []
+        except Exception as _e:  # noqa: BLE001
+            logger.debug(f"router-context fallback fetch failed: {_e}")
+            recent_turns = []
+    router_context = (
+        agent.recaller.format_context(recent_turns) if recent_turns else ""
+    )
 
     # Deterministic patient-profile hint. Two structured blocks are
     # injected ahead of the recent ST turns:

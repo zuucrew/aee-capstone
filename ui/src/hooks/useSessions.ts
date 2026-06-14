@@ -24,6 +24,11 @@ export function useSessions(patientId: string | undefined | null) {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [activeId, setActiveIdState] = useState<string>("");
   const [loaded, setLoaded] = useState(false);
+  // Surfaced by the "Resync" button so a manual pull shows its result
+  // (count) or its error on screen — turns an invisible failed fetch
+  // into something the user (and we) can actually see.
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState<string | null>(null);
 
   // Persist the chosen activeId so a refresh keeps you on the same chat.
   const setActiveId = useCallback((id: string) => {
@@ -31,8 +36,12 @@ export function useSessions(patientId: string | undefined | null) {
     try { localStorage.setItem(LS_ACTIVE, id); } catch { /* ignore */ }
   }, []);
 
-  const refresh = useCallback(async () => {
-    if (!patientId) return;
+  const refresh = useCallback(async (report = false) => {
+    if (!patientId) {
+      if (report) setSyncMsg("No patient loaded — log in first.");
+      return;
+    }
+    if (report) { setSyncing(true); setSyncMsg(null); }
     try {
       const { sessions: list } = await chatSessionsApi.list(patientId);
       setSessions(list);
@@ -47,10 +56,19 @@ export function useSessions(patientId: string | undefined | null) {
       } else if (cachedActive) {
         setActiveIdState(cachedActive);
       }
+      if (report) {
+        const voice = list.filter((s) => s.session_id.startsWith("voice-")).length;
+        setSyncMsg(
+          list.length === 0
+            ? "Server returned 0 sessions for this patient."
+            : `Synced ${list.length} from server — ${voice} voice · ${list.length - voice} chat.`,
+        );
+      }
     } catch (e) {
       // Non-fatal — sidebar can still operate offline-ish on stale state
       // eslint-disable-next-line no-console
       console.warn("Failed to fetch chat sessions:", e);
+      if (report) setSyncMsg(`Sync failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       // Set loaded=true AFTER the fetch resolves. The lazy-create
       // effect below gates on this flag, so flipping it earlier
@@ -58,6 +76,7 @@ export function useSessions(patientId: string | undefined | null) {
       // where every patient-id hydrate spawned a fresh empty
       // session before the existing-session list could populate.
       setLoaded(true);
+      if (report) setSyncing(false);
     }
   }, [patientId, setActiveId]);
 
@@ -139,5 +158,7 @@ export function useSessions(patientId: string | undefined | null) {
     rename,
     refresh,
     loaded,
+    syncing,
+    syncMsg,
   };
 }

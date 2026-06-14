@@ -5,6 +5,7 @@ import {
   MessageSquare,
   Mic,
   Plus,
+  RefreshCw,
   Settings,
   Trash2,
   User,
@@ -24,6 +25,9 @@ interface Props {
   onLogout: () => void;
   onOpenProfile: () => void;
   activeSessionId: string;
+  onResync: () => void;
+  syncing: boolean;
+  syncMsg: string | null;
 }
 
 const isVoiceSession = (s: SessionMeta) => s.session_id.startsWith("voice-");
@@ -38,6 +42,9 @@ export function Sidebar({
   onLogout,
   onOpenProfile,
   activeSessionId,
+  onResync,
+  syncing,
+  syncMsg,
 }: Props) {
   const [tab, setTab] = useState<"sessions" | "tools">("sessions");
 
@@ -104,6 +111,32 @@ export function Sidebar({
       {/* ── Tab body ───────────────────────────────────────────────── */}
       {tab === "sessions" ? (
         <div className="flex-1 flex flex-col min-h-0">
+          {/* Resync — manually pull conversations from the database. The
+              fix for a sidebar that looks empty even though the server has
+              the data: forces a fresh, uncached fetch and shows the result. */}
+          <div className="px-3 pt-2 pb-2 border-b border-border">
+            <button
+              type="button"
+              onClick={onResync}
+              disabled={syncing}
+              className="w-full flex items-center justify-center gap-1.5 text-[11px] py-1.5 rounded-md border border-border text-slate-300 hover:bg-bg-card disabled:opacity-60"
+              title="Pull all conversations fresh from the database"
+            >
+              <RefreshCw size={12} className={clsx(syncing && "animate-spin")} />
+              {syncing ? "Syncing…" : "Resync conversations"}
+            </button>
+            {syncMsg && (
+              <div
+                className={clsx(
+                  "text-[10px] mt-1.5 px-0.5 leading-snug",
+                  syncMsg.startsWith("Sync failed") ? "text-danger" : "text-slate-500",
+                )}
+              >
+                {syncMsg}
+              </div>
+            )}
+          </div>
+
           {/* Voice half (top) */}
           <SessionList
             title="Voice"

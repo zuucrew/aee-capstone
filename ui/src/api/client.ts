@@ -45,6 +45,11 @@ async function request<T>(
 ): Promise<T> {
   const { json, headers, ...rest } = init;
   const res = await fetch(`${BASE}${path}`, {
+    // Never let the browser HTTP cache serve a stale API response. The
+    // session list in particular must always reflect the live database —
+    // a cached empty response was making the sidebar look permanently
+    // empty even though the backend had the data.
+    cache: "no-store",
     ...rest,
     headers: {
       "content-type": "application/json",

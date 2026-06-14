@@ -356,6 +356,26 @@ async def _strip_api_prefix(request, call_next):
     return await call_next(request)
 
 
+# Keep browsers from serving stale dynamic content. Two cases:
+#   - HTML (the SPA index) → ``no-cache`` so a freshly deployed bundle hash
+#     is always picked up on the next load. A cached index.html was pinning
+#     users to an old JS bundle.
+#   - JSON (every API response) → ``no-store`` so the live session list /
+#     patient data is never cached; the sidebar always reflects the DB. A
+#     cached empty session-list response was the root cause of a sidebar
+#     that looked permanently empty while the database had the data.
+# Hashed JS/CSS assets are immutable, so they are left cacheable.
+@app.middleware("http")
+async def _cache_control(request, call_next):
+    response = await call_next(request)
+    ctype = response.headers.get("content-type", "")
+    if ctype.startswith("text/html"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+    elif ctype.startswith("application/json"):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 # ── Routers ──────────────────────────────────────────────────────────
 
 app.include_router(health_router.router)

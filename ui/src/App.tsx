@@ -116,6 +116,9 @@ export default function App() {
           onLogout={patient.logout}
           onOpenProfile={() => setProfileOpen(true)}
           activeSessionId={sessions.activeId}
+          onResync={() => sessions.refresh(true)}
+          syncing={sessions.syncing}
+          syncMsg={sessions.syncMsg}
         />
 
         <main className="flex-1 flex flex-col min-w-0">

@@ -711,7 +711,7 @@ class AgentOrchestrator:
         # Always off-thread so the post-turn save doesn't park the loop
         # while the next turn is trying to start.
         if answer_final:
-            self._save_voice_turn_async(
+            await self._save_voice_turn_async(
                 user_id=user_id,
                 session_id=session_id,
                 user_message=user_message,
@@ -740,7 +740,7 @@ class AgentOrchestrator:
 
     # ── Voice memory persistence ────────────────────────────────
 
-    def _save_voice_turn_async(
+    async def _save_voice_turn_async(
         self,
         *,
         user_id: str,
@@ -750,7 +750,9 @@ class AgentOrchestrator:
         was_interrupted: bool,
     ) -> None:
         """Persist a voice turn to short-term + (eventually) long-term
-        memory, off the event loop, fire-and-forget.
+        memory. Runs off-thread (so it never parks the event loop) but is
+        AWAITED to completion so the write can't be dropped when the call's
+        loop tears down on hang-up.
 
         The flow mirrors what the full ``store_and_distill_node`` does
         for the text path — but it never blocks TTS or the next turn.
@@ -788,15 +790,36 @@ class AgentOrchestrator:
                     ),
                 )
                 # Materialise a chat_sessions row so the call appears in
-                # the UI sidebar (under the Voice section — the prefix
-                # "voice-" on session_id is the marker the frontend uses
-                # to split voice from text). Idempotent — touch_session
-                # creates on first call, bumps last_message_at after.
+                # the UI sidebar (the "voice-" session_id prefix is the
+                # marker the frontend uses to split voice from text).
+                # Use the SAME working Supabase session that just saved the
+                # turns — NOT touch_session_sync(), whose get_sql_engine()
+                # is unreliable inside the voice-worker process and silently
+                # failed there, leaving voice calls invisible in the sidebar.
                 try:
-                    from api.routers.chat_sessions import touch_session_sync
-                    touch_session_sync(user_id, session_id)
+                    from infrastructure.db.crm_models import ChatSession
+                    sess = self.st_store.supabase_session_factory()
+                    try:
+                        now_i = int(now)
+                        row = sess.get(ChatSession, session_id)
+                        if row is None:
+                            sess.add(ChatSession(
+                                session_id=session_id,
+                                patient_id=user_id,
+                                title=((user_message or "").strip()[:48] or "Voice call"),
+                                last_message_at=now_i,
+                                created_at=now_i,
+                                updated_at=now_i,
+                                archived=0,
+                            ))
+                        else:
+                            row.last_message_at = now_i
+                            row.updated_at = now_i
+                        sess.commit()
+                    finally:
+                        sess.close()
                 except Exception as e:
-                    logger.debug(f"voice: touch_session failed (non-fatal): {e}")
+                    logger.warning(f"voice: session header create failed: {e}")
 
                 # Auto-title after a few turns of real content. Only fires
                 # once per session (the helper checks if the title is
@@ -830,25 +853,17 @@ class AgentOrchestrator:
             except Exception as e:
                 logger.warning(f"voice: memory write failed: {e}")
 
+        # Run the save to COMPLETION: off-thread (so the event loop isn't
+        # blocked by the DB write) but AWAITED so it can't be dropped when
+        # the call's loop tears down on hang-up. The previous version had a
+        # stray `yield` below this point that silently turned this whole
+        # method into a no-op generator — every voice turn was lost with no
+        # error. Awaiting also replaces the fire-and-forget create_task that
+        # could be cancelled mid-write.
         try:
-            _asyncio.create_task(_asyncio.to_thread(_do_save))
-        except RuntimeError:
-            # No running event loop (shouldn't happen in the voice
-            # path) — best-effort sync save.
-            _do_save()
-
-        yield (
-            "final",
-            AgentResponse(
-                answer=answer,
-                route="voice_fast",
-                routes=["voice_fast"],
-                action=None,
-                tool_output="",
-                memory_context=memory_context,
-                latency_ms=latency,
-            ),
-        )
+            await _asyncio.to_thread(_do_save)
+        except Exception as e:
+            logger.warning(f"voice: save task failed: {e}")
 
     # ── Async Streaming Entry Point (for Voice / LiveKit) ────────
 

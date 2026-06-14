@@ -1237,7 +1237,10 @@ async def session_turns(
     limit: int = 20,
     st_store=Depends(get_st_store),
 ) -> SessionTurnsResponse:
-    turns = await asyncio.to_thread(st_store.recent, user_id, session_id, limit)
+    # Use history() (no TTL filter) — this endpoint DISPLAYS a conversation
+    # in the sidebar, which must work for old sessions too. recent() hides
+    # turns past their 24h TTL and is only for the orchestrator's live context.
+    turns = await asyncio.to_thread(st_store.history, user_id, session_id, limit)
     items = [
         TurnItem(
             role=getattr(t, "role", "user"),

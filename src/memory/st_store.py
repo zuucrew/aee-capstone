@@ -119,6 +119,45 @@ class ShortTermMemoryStore:
         finally:
             session.close()
 
+    def history(self, user_id: str, session_id: str, k: int) -> List[ConversationTurn]:
+        """Retrieve the most recent *k* turns for a session, for DISPLAY.
+
+        Unlike :meth:`recent` — which powers the orchestrator's active
+        short-term context and therefore hides turns past their TTL — this
+        returns the stored turns **regardless of ``ttl_at``**. The sidebar
+        must be able to reopen a conversation and show its history days or
+        weeks later, as long as the rows still exist in ``st_turns``.
+        """
+        session = self.supabase_session_factory()
+        try:
+            results = session.execute(
+                text("""
+                    SELECT role, content, created_at
+                    FROM st_turns
+                    WHERE user_id = :user_id
+                        AND session_id = :session_id
+                    ORDER BY created_at DESC
+                    LIMIT :k
+                """),
+                {"user_id": user_id, "session_id": session_id, "k": k}
+            ).fetchall()
+
+            turns = []
+            for row in reversed(results):
+                turns.append(ConversationTurn(
+                    role=row.role,
+                    content=row.content,
+                    user_id=user_id,
+                    session_id=session_id,
+                    ts=row.created_at.timestamp() if hasattr(row.created_at, 'timestamp') else time.time(),
+                ))
+            return turns
+        except Exception as e:
+            logger.error("Failed to retrieve session history from Supabase: {}", e)
+            return []
+        finally:
+            session.close()
+
     def clear(self, user_id: str, session_id: str) -> None:
         """Clear all turns for a session."""
         session = self.supabase_session_factory()

@@ -701,6 +701,17 @@ class AgentOrchestrator:
             "- If the information below doesn't answer the question, say so in "
             "one short sentence and offer the main line +94 11 544 4444 or to "
             "connect them — never invent doctors, times, departments, or facts.\n\n"
+            "Hospital quick facts (these are correct — use them for general "
+            "questions about hours and contact):\n"
+            "- The hospital is open 24 hours a day, every day, for emergency care.\n"
+            "- The Outpatient Department (OPD) is open 7:00 am to 10:00 pm "
+            "(07:00 to 22:00).\n"
+            "- Specialist consultant appointments are by appointment, usually "
+            "in the afternoon and evening.\n"
+            "- Main hospital phone number: +94 11 544 4444.\n"
+            "Use these quick facts ONLY for general hours/contact questions; "
+            "for doctors, appointments, and bookings always use the INFORMATION "
+            "block below (the live system), never these.\n\n"
         )
         if tool_output:
             system += (

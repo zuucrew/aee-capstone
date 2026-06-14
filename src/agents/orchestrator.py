@@ -688,6 +688,19 @@ class AgentOrchestrator:
             "sentences. No markdown, no tables, no bullet points, no asterisks. "
             "The caller is listening, not reading; read names and numbers "
             "naturally.\n\n"
+            "Conversation rules:\n"
+            "- STAY on the department, doctor, or appointment the caller is "
+            "currently discussing. Do NOT switch to a different department or "
+            "list unrelated doctors unless the caller explicitly asks.\n"
+            "- Before you confirm a booking, you must know BOTH a specific "
+            "doctor AND a date and time. If either is missing, ASK for it — "
+            "never pick a doctor or time on the caller's behalf.\n"
+            "- When the caller corrects you ('no, not that one', 'I meant X'), "
+            "use the correction and the recent conversation to figure out who "
+            "or what they mean before acting.\n"
+            "- If the information below doesn't answer the question, say so in "
+            "one short sentence and offer the main line +94 11 544 4444 or to "
+            "connect them — never invent doctors, times, departments, or facts.\n\n"
         )
         if tool_output:
             system += (

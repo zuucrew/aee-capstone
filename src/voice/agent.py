@@ -14,6 +14,7 @@ Compatible with **livekit-agents >= 1.5.0**.
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Optional
 
 from loguru import logger

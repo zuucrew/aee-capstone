@@ -21,6 +21,7 @@ PROFILE="${AWS_PROFILE:-nawaloka}"
 REGION="${AWS_REGION:-us-west-2}"
 ACCOUNT="$(aws sts get-caller-identity --profile "$PROFILE" --query Account --output text)"
 REGISTRY="${ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com"
+echo "Registry: $REGISTRY, Profile: $PROFILE, Region: $REGION, Account: $ACCOUNT"
 
 cd "$(dirname "$0")/../.."
 

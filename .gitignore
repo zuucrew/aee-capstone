@@ -81,6 +81,10 @@ Weeks_15*.pdf
 # ── Local data / scratch ──────────────────────────────────────────
 data/*
 !data/.gitkeep
+# Ship the RAG knowledge base (students ingest it into Qdrant); keep other
+# data/ contents (scratch, generated dumps) ignored.
+!data/knowledge_base/
+!data/knowledge_base/**
 logs/
 *.log
 

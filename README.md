@@ -303,7 +303,12 @@ E2E Deployment/
 │   └── Nawaloka_Cloud_Services_Cost_and_Decisions.{docx,pdf}  # cost, free tier, teardown
 │
 ├── README.md                                     # ← this file
-├── STUDENT_SETUP_GUIDE.md
+├── student_docs/                                 # student handouts
+│   ├── STUDENT_SETUP_GUIDE.pdf                    # Docker setup + command reference
+│   ├── student-command-cheatsheet.pdf            # command cheat sheet
+│   └── recap.md                                  # concept recap (Docker / AWS / CI-CD)
+├── .env.example                                  # copy to .env and fill in your keys
+├── data/knowledge_base/                          # RAG corpus (ingested into Qdrant)
 ├── Makefile                                      # demo / voice / voice-test / voice-logs / …
 ├── docker-compose.yml                            # api + web (default), voice (profile), ★ W16: + redis + worker
 ├── compose.prod.yml                              # ★ NEW W16: 2 api replicas + worker + voice + redis + web
@@ -633,7 +638,7 @@ done
 
 | You want to … | Read |
 |---|---|
-| **Set up your own dev environment** | `STUDENT_SETUP_GUIDE.md` |
+| **Set up your own dev environment** | `student_docs/STUDENT_SETUP_GUIDE.pdf` |
 | **Set up AWS from zero (account + IAM + CLI)** | `docs/AWS_From_Zero_Account_and_IAM_Setup.docx` |
 | **Understand AWS cost, free tier & decisions** | `docs/Nawaloka_Cloud_Services_Cost_and_Decisions.docx` |
 | **Deploy to AWS** | the **Deploying to AWS** section above |
